@@ -3,6 +3,17 @@
 Скрипт-линтер для TikTokFeed (.NET, Clean Architecture: Domain -> Application -> Infrastructure -> Api).
 
 Возвращает 1, если найдено хотя бы одно нарушение уровня "error", иначе 0.
+
+Точечное подавление ложных/принятых срабатываний:
+- в .cs-файлах — комментарий '// check-architecture-ignore: <rule-id>[,...]'
+  (или 'all' вместо списка id) на строке с нарушением или на строке перед ней;
+- в файлах без комментариев (JSON и т.п.) — запись в
+  scripts/check_architecture_suppressions.json: {"file", "rule", "match", "reason"},
+  где "match" — точный (без учёта пробелов по краям) текст подавляемой строки.
+  Если строка изменится, суппрессия перестанет совпадать и находка вернётся —
+  это ожидаемо: изменившееся значение стоит перепроверить.
+Подавленные находки не выводятся в обычном режиме, но учитываются в сводке
+(см. '--show-suppressed').
 """
 
 from __future__ import annotations
@@ -39,18 +50,87 @@ class Violation:
 
 
 VIOLATIONS: list[Violation] = []
+SUPPRESSED: list[Violation] = []
+
+# '// check-architecture-ignore: rule-a, rule-b' или '// check-architecture-ignore: all'
+SUPPRESS_RE = re.compile(r"check-architecture-ignore:\s*([A-Za-z0-9_,\-\s]+)")
+
+_suppression_cache: dict[Path, dict[int, set[str]]] = {}
+
+
+def _suppressions_for(path: Path) -> dict[int, set[str]]:
+    """Строки, для которых найден маркер подавления: номер строки -> набор rule-id ('*' = все)."""
+    cached = _suppression_cache.get(path)
+    if cached is not None:
+        return cached
+
+    suppressions: dict[int, set[str]] = {}
+    for i, line in enumerate(read_lines(path), start=1):
+        m = SUPPRESS_RE.search(line)
+        if not m:
+            continue
+        rules = {r.strip() for r in m.group(1).split(",") if r.strip()}
+        rules = {"*"} if "all" in rules else rules
+        # маркер действует на свою строку (trailing-комментарий) и на следующую
+        # (комментарий на отдельной строке перед нарушением)
+        suppressions.setdefault(i, set()).update(rules)
+        suppressions.setdefault(i + 1, set()).update(rules)
+
+    _suppression_cache[path] = suppressions
+    return suppressions
+
+
+SUPPRESSIONS_FILE = ROOT / "scripts" / "check_architecture_suppressions.json"
+
+
+def _load_file_suppressions() -> dict[tuple[str, str], set[str]]:
+    """Суппрессии для файлов без комментариев: (file, rule) -> набор точных строк."""
+    if not SUPPRESSIONS_FILE.exists():
+        return {}
+    try:
+        entries = json.loads(SUPPRESSIONS_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"[WARN]   не удалось разобрать {SUPPRESSIONS_FILE}: {exc}", file=sys.stderr)
+        return {}
+
+    result: dict[tuple[str, str], set[str]] = {}
+    for entry in entries:
+        key = (entry["file"], entry["rule"])
+        result.setdefault(key, set()).add(entry["match"].strip())
+    return result
+
+
+_file_suppressions = _load_file_suppressions()
+
+
+def _is_suppressed(rule: str, path: Path, line: int) -> bool:
+    if path.suffix == ".cs":
+        rules = _suppressions_for(path).get(line, set())
+        if "*" in rules or rule in rules:
+            return True
+
+    rel = str(path.relative_to(ROOT)).replace("\\", "/")
+    matches = _file_suppressions.get((rel, rule))
+    if matches:
+        lines = read_lines(path)
+        if 1 <= line <= len(lines) and lines[line - 1].strip() in matches:
+            return True
+
+    return False
 
 
 def add(rule: str, severity: str, path: Path, line: int, message: str) -> None:
-    VIOLATIONS.append(
-        Violation(
-            rule=rule,
-            severity=severity,
-            file=str(path.relative_to(ROOT)).replace("\\", "/"),
-            line=line,
-            message=message,
-        )
+    violation = Violation(
+        rule=rule,
+        severity=severity,
+        file=str(path.relative_to(ROOT)).replace("\\", "/"),
+        line=line,
+        message=message,
     )
+    if _is_suppressed(rule, path, line):
+        SUPPRESSED.append(violation)
+    else:
+        VIOLATIONS.append(violation)
 
 
 def iter_files(base: Path, suffix: str) -> list[Path]:
@@ -291,6 +371,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="вывести результат в формате JSON")
     parser.add_argument(
+        "--show-suppressed",
+        action="store_true",
+        help="также показать находки, подавленные комментариями check-architecture-ignore",
+    )
+    parser.add_argument(
         "--path",
         default=str(ROOT / "src"),
         help="каталог для сканирования (по умолчанию src/)",
@@ -308,13 +393,22 @@ def main() -> int:
             check_fn(cs_files)
 
     VIOLATIONS.sort(key=lambda v: (v.file, v.line))
+    SUPPRESSED.sort(key=lambda v: (v.file, v.line))
 
     if args.json:
-        print(json.dumps([asdict(v) for v in VIOLATIONS], ensure_ascii=False, indent=2))
+        payload = {"violations": [asdict(v) for v in VIOLATIONS]}
+        if args.show_suppressed:
+            payload["suppressed"] = [asdict(v) for v in SUPPRESSED]
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         severity_icon = {"error": "[ERROR]", "warning": "[WARN] ", "info": "[INFO] "}
         for v in VIOLATIONS:
             print(f"{severity_icon.get(v.severity, v.severity):8} {v.rule:28} {v.file}:{v.line} — {v.message}")
+
+        if args.show_suppressed and SUPPRESSED:
+            print("\n--- подавлено комментариями check-architecture-ignore ---")
+            for v in SUPPRESSED:
+                print(f"{'[SKIP]':8} {v.rule:28} {v.file}:{v.line} — {v.message}")
 
         print()
         by_severity = {"error": 0, "warning": 0, "info": 0}
@@ -323,6 +417,8 @@ def main() -> int:
 
         print(f"Нарушений: {len(VIOLATIONS)} "
               f"(error: {by_severity['error']}, warning: {by_severity['warning']}, info: {by_severity['info']})")
+        if SUPPRESSED:
+            print(f"Подавлено комментариями: {len(SUPPRESSED)} (--show-suppressed, чтобы увидеть)")
 
     return 1 if any(v.severity == "error" for v in VIOLATIONS) else 0
 
