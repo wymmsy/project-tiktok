@@ -24,6 +24,7 @@ public static class HttpResiliencePolicies
                         "Retry {Attempt} after {Delay}ms: {Reason}",
                         attempt,
                         delay.TotalMilliseconds,
+                        // check-architecture-ignore: sync-over-async — outcome.Result это Polly DelegateResult<T>, не Task
                         outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString()));
 
     public static IAsyncPolicy<HttpResponseMessage> CircuitBreaker(ILogger? logger = null) =>
@@ -37,6 +38,7 @@ public static class HttpResiliencePolicies
                     logger?.LogError(
                         "Circuit OPEN for {Delay}s: {Reason}",
                         breakDelay.TotalSeconds,
+                        // check-architecture-ignore: sync-over-async — outcome.Result это Polly DelegateResult<T>, не Task
                         outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString()),
                 onReset: () => logger?.LogInformation("Circuit reset (closed)"));
 }
