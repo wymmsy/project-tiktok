@@ -1,0 +1,38 @@
+[
+  {
+    "file": "src/Content.Api/appsettings.json",
+    "rule": "hardcoded-secret",
+    "match": "\"DefaultConnection\": \"Host=localhost;Port=5432;Database=content;Username=postgres;Password=postgres\"",
+    "reason": "dev-only значение, совпадает с docker-compose.yml, не используется в проде"
+  },
+  {
+    "file": "src/Content.Api/appsettings.json",
+    "rule": "hardcoded-secret",
+    "match": "\"Secret\": \"dev-super-secret-shared-key-change-me-please-32bytes!\",",
+    "reason": "dev-only JWT-ключ, совпадает с docker-compose.yml, не используется в проде"
+  },
+  {
+    "file": "src/Engagement.Api/appsettings.json",
+    "rule": "hardcoded-secret",
+    "match": "\"DefaultConnection\": \"Host=localhost;Port=5432;Database=engagement;Username=postgres;Password=postgres\"",
+    "reason": "dev-only значение, совпадает с docker-compose.yml, не используется в проде"
+  },
+  {
+    "file": "src/Engagement.Api/appsettings.json",
+    "rule": "hardcoded-secret",
+    "match": "\"Secret\": \"dev-super-secret-shared-key-change-me-please-32bytes!\",",
+    "reason": "dev-only JWT-ключ, совпадает с docker-compose.yml, не используется в проде"
+  },
+  {
+    "file": "src/Identity.Api/appsettings.json",
+    "rule": "hardcoded-secret",
+    "match": "\"DefaultConnection\": \"Host=localhost;Port=5432;Database=identity;Username=postgres;Password=postgres\"",
+    "reason": "dev-only значение, совпадает с docker-compose.yml, не используется в проде"
+  },
+  {
+    "file": "src/Identity.Api/appsettings.json",
+    "rule": "hardcoded-secret",
+    "match": "\"Secret\": \"dev-super-secret-shared-key-change-me-please-32bytes!\",",
+    "reason": "dev-only JWT-ключ, совпадает с docker-compose.yml, не используется в проде"
+  }
+]
